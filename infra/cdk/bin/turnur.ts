@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import * as cdk from 'aws-cdk-lib';
 
-import { TurnurPlaceholderStack } from '../lib/turnur-placeholder-stack';
+import { TurnurApiStack } from '../lib/turnur-api-stack';
 
 const app = new cdk.App();
 
-new TurnurPlaceholderStack(app, 'TurnurPlaceholderStack');
+new TurnurApiStack(app, 'TurnurApiStack');

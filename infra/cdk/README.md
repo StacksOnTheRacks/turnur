@@ -1,6 +1,6 @@
 # Turnur AWS CDK (`infra/cdk`)
 
-AWS CDK **v2** (TypeScript) workspace for Turnur infrastructure. This package currently defines a **placeholder stack** with zero AWS resources so later tickets can add the API stack, Lambda handlers, and CI without re-scaffolding.
+AWS CDK **v2** (TypeScript) workspace for Turnur infrastructure. This package defines **`TurnurApiStack`**: an API Gateway HTTP API (v2) and a Node 22 stub Lambda ready for route wiring in [#3](https://github.com/StacksOnTheRacks/turnur/issues/3).
 
 ## Prerequisites
 
@@ -27,17 +27,17 @@ npm run synth
 ```
 
 - **`npm run build`** - compiles TypeScript under `bin/` and `lib/` to `dist/`
-- **`npm test`** - runs Vitest smoke tests (stack synthesizes cleanly)
+- **`npm test`** - runs Vitest stack assertions (HTTP API + Lambda present; no routes yet)
 - **`npm run synth`** - emits CloudFormation templates under `cdk.out/` (no AWS credentials required)
 
 ## Layout
 
 | Path | Role |
 | --- | --- |
-| `bin/turnur.ts` | CDK app entry; instantiates `TurnurPlaceholderStack` |
-| `lib/turnur-placeholder-stack.ts` | Minimal stack with zero AWS resources |
-| `lib/turnur-placeholder-stack.test.ts` | Vitest smoke test |
-| `lambda/` | Reserved for future Lambda handlers |
+| `bin/turnur.ts` | CDK app entry; instantiates `TurnurApiStack` |
+| `lib/turnur-api-stack.ts` | HTTP API (v2) + stub `NodejsFunction` (routes arrive in #3) |
+| `lib/turnur-api-stack.test.ts` | Vitest template assertions |
+| `lambda/stub-handler.ts` | Placeholder Lambda handler (not the `/v1/health` contract) |
 
 ## Runtime note
 
