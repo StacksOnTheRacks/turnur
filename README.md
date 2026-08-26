@@ -7,3 +7,5 @@ Identity, chat, rooms, and media stay on the host platform (RiffSync or anything
 ## Infrastructure
 
 AWS CDK workspace lives under [`infra/cdk/`](infra/cdk/README.md). See that README for Node 22 setup and verify commands (`npm ci`, `npm run build`, `npm test`, `npm run synth`).
+
+For game SDK key setup and verification (`GET /v1/health` → configure key → `GET /v1/game/me`), see [Game authentication onboarding](infra/cdk/README.md#game-authentication-onboarding) in the CDK README.
