@@ -29,19 +29,32 @@ describe('TurnurApiStack', () => {
       Runtime: 'nodejs22.x',
     });
 
-    template.resourceCountIs('AWS::ApiGatewayV2::Route', 1);
+    template.resourceCountIs('AWS::ApiGatewayV2::Route', 2);
     template.hasResourceProperties('AWS::ApiGatewayV2::Route', {
       RouteKey: 'GET /v1/health',
       AuthorizationType: 'NONE',
     });
+    template.hasResourceProperties('AWS::ApiGatewayV2::Route', {
+      RouteKey: 'GET /v1/game/me',
+      AuthorizationType: 'NONE',
+    });
 
-    template.resourceCountIs('AWS::ApiGatewayV2::Integration', 1);
+    template.resourceCountIs('AWS::ApiGatewayV2::Integration', 2);
     template.hasResourceProperties('AWS::ApiGatewayV2::Integration', {
       IntegrationType: 'AWS_PROXY',
       PayloadFormatVersion: '2.0',
     });
 
     template.resourceCountIs('AWS::ApiGatewayV2::Authorizer', 0);
+
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Runtime: 'nodejs22.x',
+      Environment: {
+        Variables: Match.objectLike({
+          GAME_REGISTRY_TABLE_NAME: Match.anyValue(),
+        }),
+      },
+    });
 
     const permissions = template.findResources('AWS::Lambda::Permission');
     expect(Object.keys(permissions).length).toBeGreaterThanOrEqual(1);

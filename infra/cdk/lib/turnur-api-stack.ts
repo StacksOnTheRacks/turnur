@@ -23,6 +23,7 @@ const sharedLambdaBundle = {
 export class TurnurApiStack extends cdk.Stack {
   public readonly httpApi: apigwv2.HttpApi;
   public readonly healthFunction: lambdaNodejs.NodejsFunction;
+  public readonly gameMeFunction: lambdaNodejs.NodejsFunction;
   public readonly gameRegistryTable: dynamodb.Table;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -83,6 +84,23 @@ export class TurnurApiStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'GameRegistryTableArn', {
       value: this.gameRegistryTable.tableArn,
       exportName: 'GameRegistryTableArn',
+    });
+
+    this.gameMeFunction = this.createProtectedNodejsFunction('GameMeFn', {
+      entry: path.join(__dirname, '../lambda/game-me-handler.ts'),
+      handler: 'handler',
+      description: 'GET /v1/game/me — authenticated game identity probe',
+    });
+
+    const gameMeIntegration = new integrations.HttpLambdaIntegration(
+      'GameMeInt',
+      this.gameMeFunction,
+    );
+
+    this.httpApi.addRoutes({
+      path: '/v1/game/me',
+      methods: [apigwv2.HttpMethod.GET],
+      integration: gameMeIntegration,
     });
   }
 
