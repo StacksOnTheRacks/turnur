@@ -1,9 +1,22 @@
+import * as path from 'path';
+
 import * as cdk from 'aws-cdk-lib';
-import { Template } from 'aws-cdk-lib/assertions';
+import { Match, Template } from 'aws-cdk-lib/assertions';
+import { Construct } from 'constructs';
 import { describe, expect, it } from 'vitest';
 
 import { DEV_FIXTURE_GAME_ID, DEV_FIXTURE_KEY_HASH } from './game-auth/constants';
 import { TurnurApiStack } from './turnur-api-stack';
+
+class ProtectedFnProbeStack extends TurnurApiStack {
+  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+    super(scope, id, props);
+    this.createProtectedNodejsFunction('AuthProbeFn', {
+      entry: path.join(__dirname, '../lambda/health-handler.ts'),
+      handler: 'handler',
+    });
+  }
+}
 
 describe('TurnurApiStack', () => {
   it('synthesizes HTTP API, Node 22 Lambda, and GET /v1/health route', () => {
@@ -54,5 +67,31 @@ describe('TurnurApiStack', () => {
 
     template.hasOutput('GameRegistryTableName', {});
     template.hasOutput('GameRegistryTableArn', {});
+  });
+
+  it('protected Lambda factory grants GameRegistry GetItem and sets env var', () => {
+    const app = new cdk.App();
+    const stack = new ProtectedFnProbeStack(app, 'TurnurApiStackProtectedFnTest');
+    const template = Template.fromStack(stack);
+
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Runtime: 'nodejs22.x',
+      Environment: {
+        Variables: Match.objectLike({
+          GAME_REGISTRY_TABLE_NAME: Match.anyValue(),
+        }),
+      },
+    });
+
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: 'dynamodb:GetItem',
+            Effect: 'Allow',
+          }),
+        ]),
+      },
+    });
   });
 });

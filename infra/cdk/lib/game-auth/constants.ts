@@ -1,3 +1,9 @@
+/** ADR-002 SDK key prefix. */
+export const SDK_KEY_PREFIX = 'turnur_sk_';
+
+/** ADR-002: turnur_sk_ + exactly 32 lowercase hex characters. */
+export const SDK_KEY_FORMAT_REGEX = /^turnur_sk_[0-9a-f]{32}$/;
+
 /** Stable game id for the dev/test fixture row seeded in GameRegistry. */
 export const DEV_FIXTURE_GAME_ID = 'dev-fixture';
 

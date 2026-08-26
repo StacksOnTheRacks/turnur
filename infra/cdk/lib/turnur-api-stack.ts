@@ -4,6 +4,7 @@ import * as cdk from 'aws-cdk-lib';
 import * as apigwv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import * as integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as lambdaNodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import {
@@ -83,5 +84,35 @@ export class TurnurApiStack extends cdk.Stack {
       value: this.gameRegistryTable.tableArn,
       exportName: 'GameRegistryTableArn',
     });
+  }
+
+  /** Protected Lambda factory: registry read + GAME_REGISTRY_TABLE_NAME for in-handler auth. */
+  createProtectedNodejsFunction(
+    id: string,
+    props: Pick<
+      lambdaNodejs.NodejsFunctionProps,
+      'entry' | 'handler' | 'environment' | 'description'
+    >,
+  ): lambdaNodejs.NodejsFunction {
+    const fn = new lambdaNodejs.NodejsFunction(this, id, {
+      runtime: lambda.Runtime.NODEJS_22_X,
+      bundling: sharedLambdaBundle,
+      environment: {
+        ...props.environment,
+        GAME_REGISTRY_TABLE_NAME: this.gameRegistryTable.tableName,
+      },
+      entry: props.entry,
+      handler: props.handler,
+      description: props.description,
+    });
+
+    fn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['dynamodb:GetItem'],
+        resources: [this.gameRegistryTable.tableArn],
+      }),
+    );
+
+    return fn;
   }
 }
