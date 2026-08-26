@@ -5,11 +5,13 @@ on:
     branches: [main]
     paths:
       - 'infra/cdk/**'
+      - 'packages/turnur-sdk/**'
       - '.github/workflows/ci.yml'
   push:
     branches: [main]
     paths:
       - 'infra/cdk/**'
+      - 'packages/turnur-sdk/**'
       - '.github/workflows/ci.yml'
 
 permissions:
@@ -32,3 +34,19 @@ jobs:
       - run: npm run build
       - run: npm test
       - run: npm run synth
+
+  turnur-sdk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/turnur-sdk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: packages/turnur-sdk/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
