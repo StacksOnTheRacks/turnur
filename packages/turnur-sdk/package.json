@@ -1,0 +1,27 @@
+{
+  "name": "@turnur/sdk",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Turnur TypeScript SDK for game integrators",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && vitest run"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "~5.6.3",
+    "vitest": "^3.0.2"
+  }
+}
