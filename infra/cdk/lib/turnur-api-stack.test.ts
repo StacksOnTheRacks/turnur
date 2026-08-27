@@ -60,15 +60,20 @@ describe('TurnurApiStack', () => {
     expect(Object.keys(permissions).length).toBeGreaterThanOrEqual(1);
   });
 
-  it('synthesizes GameRegistry DynamoDB table and dev fixture seed', () => {
+  it('synthesizes GameRegistry and MatchRegistry DynamoDB tables and dev fixture seed', () => {
     const app = new cdk.App();
     const stack = new TurnurApiStack(app, 'TurnurApiStackGameRegistryTest');
     const template = Template.fromStack(stack);
 
-    template.resourceCountIs('AWS::DynamoDB::Table', 1);
+    template.resourceCountIs('AWS::DynamoDB::Table', 2);
     template.hasResourceProperties('AWS::DynamoDB::Table', {
       KeySchema: [{ AttributeName: 'keyHash', KeyType: 'HASH' }],
       AttributeDefinitions: [{ AttributeName: 'keyHash', AttributeType: 'S' }],
+      BillingMode: 'PAY_PER_REQUEST',
+    });
+    template.hasResourceProperties('AWS::DynamoDB::Table', {
+      KeySchema: [{ AttributeName: 'matchId', KeyType: 'HASH' }],
+      AttributeDefinitions: [{ AttributeName: 'matchId', AttributeType: 'S' }],
       BillingMode: 'PAY_PER_REQUEST',
     });
 
@@ -80,6 +85,8 @@ describe('TurnurApiStack', () => {
 
     template.hasOutput('GameRegistryTableName', {});
     template.hasOutput('GameRegistryTableArn', {});
+    template.hasOutput('MatchRegistryTableName', {});
+    template.hasOutput('MatchRegistryTableArn', {});
   });
 
   it('protected Lambda factory grants GameRegistry GetItem and sets env var', () => {
