@@ -24,6 +24,7 @@ export class TurnurApiStack extends cdk.Stack {
   public readonly httpApi: apigwv2.HttpApi;
   public readonly healthFunction: lambdaNodejs.NodejsFunction;
   public readonly gameMeFunction: lambdaNodejs.NodejsFunction;
+  public readonly matchesAttachFunction: lambdaNodejs.NodejsFunction;
   public readonly gameRegistryTable: dynamodb.Table;
   public readonly matchRegistryTable: dynamodb.Table;
 
@@ -119,6 +120,24 @@ export class TurnurApiStack extends cdk.Stack {
       methods: [apigwv2.HttpMethod.GET],
       integration: gameMeIntegration,
     });
+
+    this.matchesAttachFunction = this.createProtectedNodejsFunction('MatchesAttachFn', {
+      entry: path.join(__dirname, '../lambda/matches-attach-handler.ts'),
+      handler: 'handler',
+      description: 'POST /v1/matches — attach (create) a match',
+      matchRegistryWrite: true,
+    });
+
+    const matchesAttachIntegration = new integrations.HttpLambdaIntegration(
+      'MatchesAttachInt',
+      this.matchesAttachFunction,
+    );
+
+    this.httpApi.addRoutes({
+      path: '/v1/matches',
+      methods: [apigwv2.HttpMethod.POST],
+      integration: matchesAttachIntegration,
+    });
   }
 
   /** Protected Lambda factory: registry read + GAME_REGISTRY_TABLE_NAME for in-handler auth. */
@@ -127,15 +146,20 @@ export class TurnurApiStack extends cdk.Stack {
     props: Pick<
       lambdaNodejs.NodejsFunctionProps,
       'entry' | 'handler' | 'environment' | 'description'
-    >,
+    > & { matchRegistryWrite?: boolean },
   ): lambdaNodejs.NodejsFunction {
+    const environment: Record<string, string> = {
+      ...props.environment,
+      GAME_REGISTRY_TABLE_NAME: this.gameRegistryTable.tableName,
+    };
+    if (props.matchRegistryWrite) {
+      environment.MATCH_REGISTRY_TABLE_NAME = this.matchRegistryTable.tableName;
+    }
+
     const fn = new lambdaNodejs.NodejsFunction(this, id, {
       runtime: lambda.Runtime.NODEJS_22_X,
       bundling: sharedLambdaBundle,
-      environment: {
-        ...props.environment,
-        GAME_REGISTRY_TABLE_NAME: this.gameRegistryTable.tableName,
-      },
+      environment,
       entry: props.entry,
       handler: props.handler,
       description: props.description,
@@ -147,6 +171,15 @@ export class TurnurApiStack extends cdk.Stack {
         resources: [this.gameRegistryTable.tableArn],
       }),
     );
+
+    if (props.matchRegistryWrite) {
+      fn.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: ['dynamodb:PutItem'],
+          resources: [this.matchRegistryTable.tableArn],
+        }),
+      );
+    }
 
     return fn;
   }
