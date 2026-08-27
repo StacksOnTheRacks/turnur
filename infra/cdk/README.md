@@ -36,6 +36,8 @@ npm run synth
 | --- | --- | --- | --- |
 | `GET` | `/v1/health` | none (public liveness) | HTTP 200, `{ "ok": true }` |
 | `GET` | `/v1/game/me` | `Authorization: Bearer` SDK key | HTTP 200, `{ "gameId": "<string>" }`; HTTP 401 structured error |
+| `POST` | `/v1/matches` | `Authorization: Bearer` SDK key | HTTP 201, `{ "matchId": "<uuid>" }`; HTTP 401 structured error |
+| `GET` | `/v1/matches/{matchId}` | `Authorization: Bearer` SDK key | HTTP 200, `{ "matchId", "status", "createdAt" }`; HTTP 401/403/404 structured error |
 
 The health route confirms the control-plane Lambda and API Gateway wiring are present. It does not check downstream dependencies (DynamoDB, Cognito, etc.).
 
@@ -177,18 +179,154 @@ console.log(gameId);
 
 On **401**, the client throws an error with the structured `code`, `message`, and `hint` fields.
 
+## Host attach onboarding
+
+After [game authentication onboarding](#game-authentication-onboarding) confirms your SDK key works, attach a match and read it back. The path is:
+
+1. **`GET /v1/game/me`** — confirm your SDK key resolves to a `gameId` (prerequisite from game auth onboarding).
+2. **`POST /v1/matches`** — attach (create) a new match; Turnur returns a server-generated `matchId`.
+3. **`GET /v1/matches/{matchId}`** — probe the match you attached; confirm `status` and `createdAt`.
+
+Reuse the same `$TURNUR_BASE_URL` and `$TURNUR_SDK_KEY` placeholders from game auth onboarding. **Do not log, commit, or paste SDK keys into public channels.**
+
+### Authentication model
+
+**Turnur authenticates games, not players.** Attach and probe routes identify your game server via SDK key only. Player identity, chat, rooms, and media stay on the host platform (RiffSync or any equivalent). See [Authentication model](#authentication-model) under game auth onboarding for key format and header rules.
+
+`POST /v1/matches` requires no request body in v1; any body is ignored. Each successful POST creates a distinct match (no idempotency).
+
+### Attach match
+
+```bash
+curl -sS -w "\nHTTP %{http_code}\n" \
+  -X POST \
+  -H "Authorization: Bearer $TURNUR_SDK_KEY" \
+  "$TURNUR_BASE_URL/v1/matches"
+```
+
+Expected **201** response:
+
+```json
+{ "matchId": "550e8400-e29b-41d4-a716-446655440000" }
+```
+
+Save the returned `matchId` for the get-match step below.
+
+### Get match
+
+Substitute the `matchId` from attach:
+
+```bash
+export TURNUR_MATCH_ID="550e8400-e29b-41d4-a716-446655440000"
+
+curl -sS -w "\nHTTP %{http_code}\n" \
+  -H "Authorization: Bearer $TURNUR_SDK_KEY" \
+  "$TURNUR_BASE_URL/v1/matches/$TURNUR_MATCH_ID"
+```
+
+Expected **200** response:
+
+```json
+{
+  "matchId": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "created",
+  "createdAt": "2026-08-27T12:00:00.000Z"
+}
+```
+
+Initial `status` is always `"created"` in v1. The response does not include `gameId` or other registry internals.
+
+### Match errors (403, 404)
+
+Match routes return the same structured JSON shape as auth errors (`code`, `message`, `hint`). Auth failures still use **401** with `game_auth_required` or `game_auth_invalid` (see [Auth errors (401)](#auth-errors-401)).
+
+| `code` | HTTP | When |
+| --- | --- | --- |
+| `match_not_found` | 404 | `matchId` does not exist (including malformed path params) |
+| `match_forbidden` | 403 | Match exists but belongs to a different game |
+
+**404 — unknown match** — use a UUID that was never attached:
+
+```bash
+curl -sS -w "\nHTTP %{http_code}\n" \
+  -H "Authorization: Bearer $TURNUR_SDK_KEY" \
+  "$TURNUR_BASE_URL/v1/matches/00000000-0000-4000-8000-000000000000"
+```
+
+Example **404** body:
+
+```json
+{
+  "code": "match_not_found",
+  "message": "Match not found",
+  "hint": "Verify the matchId exists and was created via POST /v1/matches for your game."
+}
+```
+
+**403 — wrong game** — probe a `matchId` created by another game's SDK key (error body only; no cross-game metadata):
+
+```bash
+curl -sS -w "\nHTTP %{http_code}\n" \
+  -H "Authorization: Bearer $TURNUR_SDK_KEY" \
+  "$TURNUR_BASE_URL/v1/matches/<match-id-from-another-game>"
+```
+
+Example **403** body:
+
+```json
+{
+  "code": "match_forbidden",
+  "message": "Match belongs to another game",
+  "hint": "Use the SDK key for the game that created this match."
+}
+```
+
+### Dev stack fixture (non-production)
+
+> **NON-PRODUCTION ONLY.** Use the dev fixture key from [game auth onboarding](#dev-stack-fixture-non-production) to attach and probe end-to-end after deploying a dev stack:
+
+```bash
+export TURNUR_SDK_KEY="turnur_sk_00000000000000000000000000000000"
+
+# attach
+curl -sS -X POST -H "Authorization: Bearer $TURNUR_SDK_KEY" "$TURNUR_BASE_URL/v1/matches"
+# => { "matchId": "<uuid>" }
+
+# get (substitute matchId from attach)
+curl -sS -H "Authorization: Bearer $TURNUR_SDK_KEY" "$TURNUR_BASE_URL/v1/matches/<matchId>"
+# => { "matchId": "<uuid>", "status": "created", "createdAt": "<iso8601>" }
+```
+
+### TypeScript SDK (optional)
+
+When [`packages/turnur-sdk/`](../../packages/turnur-sdk/) is available, attach and probe are:
+
+```typescript
+import { createTurnurClient } from '@turnur/sdk';
+
+const client = createTurnurClient({
+  baseUrl: process.env.TURNUR_BASE_URL!,
+  apiKey: process.env.TURNUR_SDK_KEY!,
+});
+
+const { matchId } = await client.match.create();
+const match = await client.match.get(matchId);
+console.log(match.status, match.createdAt);
+```
+
+On **401**, **403**, or **404**, the client throws an error with the structured `code`, `message`, and `hint` fields.
+
 ### Not yet implemented
 
-The following match-engine capabilities are not available over HTTP yet:
+The following match-state capabilities are not available over HTTP yet:
 
-- Host attach
 - Seats
 - Turns
 - Hidden views
 - Move log
 - Signed result
 
-Documenting them here sets expectations only; there are no routes for these flows today.
+Documenting them here sets expectations only; attach and probe are the only match routes in v1.
 
 ## Layout
 
