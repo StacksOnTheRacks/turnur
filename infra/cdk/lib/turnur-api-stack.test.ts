@@ -29,6 +29,17 @@ class MatchRegistryWriteProbeStack extends TurnurApiStack {
   }
 }
 
+class MatchRegistryReadProbeStack extends TurnurApiStack {
+  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+    super(scope, id, props);
+    this.createProtectedNodejsFunction('MatchReadProbeFn', {
+      entry: path.join(__dirname, '../lambda/health-handler.ts'),
+      handler: 'handler',
+      matchRegistryRead: true,
+    });
+  }
+}
+
 describe('TurnurApiStack', () => {
   it('synthesizes HTTP API, Node 22 Lambda, and GET /v1/health route', () => {
     const app = new cdk.App();
@@ -40,7 +51,7 @@ describe('TurnurApiStack', () => {
       Runtime: 'nodejs22.x',
     });
 
-    template.resourceCountIs('AWS::ApiGatewayV2::Route', 3);
+    template.resourceCountIs('AWS::ApiGatewayV2::Route', 4);
     template.hasResourceProperties('AWS::ApiGatewayV2::Route', {
       RouteKey: 'GET /v1/health',
       AuthorizationType: 'NONE',
@@ -53,8 +64,12 @@ describe('TurnurApiStack', () => {
       RouteKey: 'POST /v1/matches',
       AuthorizationType: 'NONE',
     });
+    template.hasResourceProperties('AWS::ApiGatewayV2::Route', {
+      RouteKey: 'GET /v1/matches/{matchId}',
+      AuthorizationType: 'NONE',
+    });
 
-    template.resourceCountIs('AWS::ApiGatewayV2::Integration', 3);
+    template.resourceCountIs('AWS::ApiGatewayV2::Integration', 4);
     template.hasResourceProperties('AWS::ApiGatewayV2::Integration', {
       IntegrationType: 'AWS_PROXY',
       PayloadFormatVersion: '2.0',
@@ -168,5 +183,51 @@ describe('TurnurApiStack', () => {
         ]),
       },
     });
+  });
+
+  it('protected Lambda factory with matchRegistryRead grants GetItem and sets env var', () => {
+    const app = new cdk.App();
+    const stack = new MatchRegistryReadProbeStack(
+      app,
+      'TurnurApiStackMatchRegistryReadTest',
+    );
+    const template = Template.fromStack(stack);
+
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Runtime: 'nodejs22.x',
+      Environment: {
+        Variables: Match.objectLike({
+          GAME_REGISTRY_TABLE_NAME: Match.anyValue(),
+          MATCH_REGISTRY_TABLE_NAME: Match.anyValue(),
+        }),
+      },
+    });
+
+    const policies = template.findResources('AWS::IAM::Policy');
+    const getItemOnMatchRegistry = Object.values(policies).some((policy) => {
+      const statements = policy.Properties?.PolicyDocument?.Statement ?? [];
+      return statements.some(
+        (statement: { Action?: string | string[]; Resource?: string | string[] }) => {
+          const actions = Array.isArray(statement.Action)
+            ? statement.Action
+            : [statement.Action];
+          if (!actions.includes('dynamodb:GetItem')) {
+            return false;
+          }
+          const resources = Array.isArray(statement.Resource)
+            ? statement.Resource
+            : [statement.Resource];
+          return resources.some(
+            (resource) =>
+              typeof resource === 'object' &&
+              resource !== null &&
+              'Fn::GetAtt' in resource &&
+              Array.isArray((resource as { 'Fn::GetAtt': string[] })['Fn::GetAtt']) &&
+              (resource as { 'Fn::GetAtt': string[] })['Fn::GetAtt'][0].includes('MatchRegistry'),
+          );
+        },
+      );
+    });
+    expect(getItemOnMatchRegistry).toBe(true);
   });
 });

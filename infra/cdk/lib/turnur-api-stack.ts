@@ -25,6 +25,7 @@ export class TurnurApiStack extends cdk.Stack {
   public readonly healthFunction: lambdaNodejs.NodejsFunction;
   public readonly gameMeFunction: lambdaNodejs.NodejsFunction;
   public readonly matchesAttachFunction: lambdaNodejs.NodejsFunction;
+  public readonly matchesProbeFunction: lambdaNodejs.NodejsFunction;
   public readonly gameRegistryTable: dynamodb.Table;
   public readonly matchRegistryTable: dynamodb.Table;
 
@@ -138,6 +139,24 @@ export class TurnurApiStack extends cdk.Stack {
       methods: [apigwv2.HttpMethod.POST],
       integration: matchesAttachIntegration,
     });
+
+    this.matchesProbeFunction = this.createProtectedNodejsFunction('MatchesProbeFn', {
+      entry: path.join(__dirname, '../lambda/matches-probe-handler.ts'),
+      handler: 'handler',
+      description: 'GET /v1/matches/{matchId} — read probe for match metadata',
+      matchRegistryRead: true,
+    });
+
+    const matchesProbeIntegration = new integrations.HttpLambdaIntegration(
+      'MatchesProbeInt',
+      this.matchesProbeFunction,
+    );
+
+    this.httpApi.addRoutes({
+      path: '/v1/matches/{matchId}',
+      methods: [apigwv2.HttpMethod.GET],
+      integration: matchesProbeIntegration,
+    });
   }
 
   /** Protected Lambda factory: registry read + GAME_REGISTRY_TABLE_NAME for in-handler auth. */
@@ -146,13 +165,13 @@ export class TurnurApiStack extends cdk.Stack {
     props: Pick<
       lambdaNodejs.NodejsFunctionProps,
       'entry' | 'handler' | 'environment' | 'description'
-    > & { matchRegistryWrite?: boolean },
+    > & { matchRegistryWrite?: boolean; matchRegistryRead?: boolean },
   ): lambdaNodejs.NodejsFunction {
     const environment: Record<string, string> = {
       ...props.environment,
       GAME_REGISTRY_TABLE_NAME: this.gameRegistryTable.tableName,
     };
-    if (props.matchRegistryWrite) {
+    if (props.matchRegistryWrite || props.matchRegistryRead) {
       environment.MATCH_REGISTRY_TABLE_NAME = this.matchRegistryTable.tableName;
     }
 
@@ -176,6 +195,15 @@ export class TurnurApiStack extends cdk.Stack {
       fn.addToRolePolicy(
         new iam.PolicyStatement({
           actions: ['dynamodb:PutItem'],
+          resources: [this.matchRegistryTable.tableArn],
+        }),
+      );
+    }
+
+    if (props.matchRegistryRead) {
+      fn.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: ['dynamodb:GetItem'],
           resources: [this.matchRegistryTable.tableArn],
         }),
       );
