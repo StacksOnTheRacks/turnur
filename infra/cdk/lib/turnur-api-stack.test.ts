@@ -18,6 +18,17 @@ class ProtectedFnProbeStack extends TurnurApiStack {
   }
 }
 
+class MatchRegistryWriteProbeStack extends TurnurApiStack {
+  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+    super(scope, id, props);
+    this.createProtectedNodejsFunction('MatchWriteProbeFn', {
+      entry: path.join(__dirname, '../lambda/health-handler.ts'),
+      handler: 'handler',
+      matchRegistryWrite: true,
+    });
+  }
+}
+
 describe('TurnurApiStack', () => {
   it('synthesizes HTTP API, Node 22 Lambda, and GET /v1/health route', () => {
     const app = new cdk.App();
@@ -29,7 +40,7 @@ describe('TurnurApiStack', () => {
       Runtime: 'nodejs22.x',
     });
 
-    template.resourceCountIs('AWS::ApiGatewayV2::Route', 2);
+    template.resourceCountIs('AWS::ApiGatewayV2::Route', 3);
     template.hasResourceProperties('AWS::ApiGatewayV2::Route', {
       RouteKey: 'GET /v1/health',
       AuthorizationType: 'NONE',
@@ -38,8 +49,12 @@ describe('TurnurApiStack', () => {
       RouteKey: 'GET /v1/game/me',
       AuthorizationType: 'NONE',
     });
+    template.hasResourceProperties('AWS::ApiGatewayV2::Route', {
+      RouteKey: 'POST /v1/matches',
+      AuthorizationType: 'NONE',
+    });
 
-    template.resourceCountIs('AWS::ApiGatewayV2::Integration', 2);
+    template.resourceCountIs('AWS::ApiGatewayV2::Integration', 3);
     template.hasResourceProperties('AWS::ApiGatewayV2::Integration', {
       IntegrationType: 'AWS_PROXY',
       PayloadFormatVersion: '2.0',
@@ -52,6 +67,16 @@ describe('TurnurApiStack', () => {
       Environment: {
         Variables: Match.objectLike({
           GAME_REGISTRY_TABLE_NAME: Match.anyValue(),
+        }),
+      },
+    });
+
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Runtime: 'nodejs22.x',
+      Environment: {
+        Variables: Match.objectLike({
+          GAME_REGISTRY_TABLE_NAME: Match.anyValue(),
+          MATCH_REGISTRY_TABLE_NAME: Match.anyValue(),
         }),
       },
     });
@@ -108,6 +133,36 @@ describe('TurnurApiStack', () => {
         Statement: Match.arrayWith([
           Match.objectLike({
             Action: 'dynamodb:GetItem',
+            Effect: 'Allow',
+          }),
+        ]),
+      },
+    });
+  });
+
+  it('protected Lambda factory with matchRegistryWrite grants PutItem and sets env var', () => {
+    const app = new cdk.App();
+    const stack = new MatchRegistryWriteProbeStack(
+      app,
+      'TurnurApiStackMatchRegistryWriteTest',
+    );
+    const template = Template.fromStack(stack);
+
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Runtime: 'nodejs22.x',
+      Environment: {
+        Variables: Match.objectLike({
+          GAME_REGISTRY_TABLE_NAME: Match.anyValue(),
+          MATCH_REGISTRY_TABLE_NAME: Match.anyValue(),
+        }),
+      },
+    });
+
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: 'dynamodb:PutItem',
             Effect: 'Allow',
           }),
         ]),
