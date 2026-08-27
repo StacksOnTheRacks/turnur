@@ -25,6 +25,7 @@ export class TurnurApiStack extends cdk.Stack {
   public readonly healthFunction: lambdaNodejs.NodejsFunction;
   public readonly gameMeFunction: lambdaNodejs.NodejsFunction;
   public readonly gameRegistryTable: dynamodb.Table;
+  public readonly matchRegistryTable: dynamodb.Table;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -84,6 +85,22 @@ export class TurnurApiStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'GameRegistryTableArn', {
       value: this.gameRegistryTable.tableArn,
       exportName: 'GameRegistryTableArn',
+    });
+
+    this.matchRegistryTable = new dynamodb.Table(this, 'MatchRegistry', {
+      partitionKey: { name: 'matchId', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    new cdk.CfnOutput(this, 'MatchRegistryTableName', {
+      value: this.matchRegistryTable.tableName,
+      exportName: 'MatchRegistryTableName',
+    });
+
+    new cdk.CfnOutput(this, 'MatchRegistryTableArn', {
+      value: this.matchRegistryTable.tableArn,
+      exportName: 'MatchRegistryTableArn',
     });
 
     this.gameMeFunction = this.createProtectedNodejsFunction('GameMeFn', {
