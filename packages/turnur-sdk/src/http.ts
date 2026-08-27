@@ -30,6 +30,41 @@ export async function authenticatedGet(
   return { status: response.status, body };
 }
 
+export async function authenticatedPost(
+  baseUrl: string,
+  apiKey: string,
+  path: string,
+): Promise<{ status: number; body: unknown }> {
+  const url = `${normalizeBaseUrl(baseUrl)}${path}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      Accept: 'application/json',
+    },
+  });
+
+  let body: unknown;
+  const text = await response.text();
+  try {
+    body = text ? JSON.parse(text) : null;
+  } catch {
+    body = null;
+  }
+
+  return { status: response.status, body };
+}
+
+export function throwStructuredError(status: number, body: unknown): never {
+  const err = (body ?? {}) as ApiErrorBody;
+  throw new TurnurApiError(
+    status,
+    err.message ?? `Request failed with status ${status}`,
+    err.code,
+    err.hint,
+  );
+}
+
 export function throwUnauthorized(body: unknown): never {
   const err = (body ?? {}) as ApiErrorBody;
   throw new TurnurApiError(
