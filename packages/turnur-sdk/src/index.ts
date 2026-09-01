@@ -6,5 +6,12 @@ export type {
   GameMeResponse,
   MatchCreateResponse,
   MatchGetResponse,
+  MatchMoveCreateResponse,
+  MatchMovesListResponse,
+  MatchSeatCreateResponse,
+  MatchSeatListResponse,
+  MatchTurnResponse,
+  MatchViewGetResponse,
+  MatchViewPutResponse,
   TurnurClientConfig,
 } from './types.js';
