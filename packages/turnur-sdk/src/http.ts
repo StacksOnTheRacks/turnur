@@ -34,25 +34,59 @@ export async function authenticatedPost(
   baseUrl: string,
   apiKey: string,
   path: string,
+  body?: unknown,
+): Promise<{ status: number; body: unknown }> {
+  const url = `${normalizeBaseUrl(baseUrl)}${path}`;
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${apiKey}`,
+    Accept: 'application/json',
+  };
+
+  const init: RequestInit = { method: 'POST', headers };
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(body);
+  }
+
+  const response = await fetch(url, init);
+
+  let responseBody: unknown;
+  const text = await response.text();
+  try {
+    responseBody = text ? JSON.parse(text) : null;
+  } catch {
+    responseBody = null;
+  }
+
+  return { status: response.status, body: responseBody };
+}
+
+export async function authenticatedPut(
+  baseUrl: string,
+  apiKey: string,
+  path: string,
+  body: unknown,
 ): Promise<{ status: number; body: unknown }> {
   const url = `${normalizeBaseUrl(baseUrl)}${path}`;
   const response = await fetch(url, {
-    method: 'POST',
+    method: 'PUT',
     headers: {
       Authorization: `Bearer ${apiKey}`,
       Accept: 'application/json',
+      'Content-Type': 'application/json',
     },
+    body: JSON.stringify(body),
   });
 
-  let body: unknown;
+  let responseBody: unknown;
   const text = await response.text();
   try {
-    body = text ? JSON.parse(text) : null;
+    responseBody = text ? JSON.parse(text) : null;
   } catch {
-    body = null;
+    responseBody = null;
   }
 
-  return { status: response.status, body };
+  return { status: response.status, body: responseBody };
 }
 
 export function throwStructuredError(status: number, body: unknown): never {
