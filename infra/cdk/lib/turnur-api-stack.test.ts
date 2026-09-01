@@ -165,7 +165,7 @@ describe('TurnurApiStack', () => {
       Runtime: 'nodejs22.x',
     });
 
-    template.resourceCountIs('AWS::ApiGatewayV2::Route', 11);
+    template.resourceCountIs('AWS::ApiGatewayV2::Route', 12);
     template.hasResourceProperties('AWS::ApiGatewayV2::Route', {
       RouteKey: 'GET /v1/health',
       AuthorizationType: 'NONE',
@@ -210,8 +210,12 @@ describe('TurnurApiStack', () => {
       RouteKey: 'GET /v1/matches/{matchId}/seats/{seatId}/view',
       AuthorizationType: 'NONE',
     });
+    template.hasResourceProperties('AWS::ApiGatewayV2::Route', {
+      RouteKey: 'GET /v1/matches/{matchId}/moves',
+      AuthorizationType: 'NONE',
+    });
 
-    template.resourceCountIs('AWS::ApiGatewayV2::Integration', 8);
+    template.resourceCountIs('AWS::ApiGatewayV2::Integration', 9);
     template.hasResourceProperties('AWS::ApiGatewayV2::Integration', {
       IntegrationType: 'AWS_PROXY',
       PayloadFormatVersion: '2.0',
@@ -589,5 +593,47 @@ describe('TurnurApiStack', () => {
     expect(hasActionOnTableResource(statements, 'dynamodb:GetItem', 'MatchMoveLog')).toBe(false);
     expect(hasActionOnTableResource(statements, 'dynamodb:PutItem', 'MatchMoveLog')).toBe(false);
     expect(hasActionOnTableResource(statements, 'dynamodb:Query', 'MatchMoveLog')).toBe(false);
+  });
+
+  it('MatchesMoveLogFn receives MatchRegistry and MatchMoveLog read env and IAM without MatchState or write', () => {
+    const app = new cdk.App();
+    const stack = new TurnurApiStack(app, 'TurnurApiStackMatchesMoveLogTest');
+    const template = Template.fromStack(stack);
+    const statements = lambdaPolicyStatements(template, 'MatchesMoveLogFn');
+
+    const env = lambdaEnvVars(template, 'MatchesMoveLogFn');
+    expect(env).toMatchObject({
+      GAME_REGISTRY_TABLE_NAME: expect.anything(),
+      MATCH_REGISTRY_TABLE_NAME: expect.anything(),
+      MATCH_MOVE_LOG_TABLE_NAME: expect.anything(),
+    });
+    expect(env).not.toHaveProperty('MATCH_STATE_TABLE_NAME');
+
+    expect(hasActionOnTableResource(statements, 'dynamodb:GetItem', 'MatchRegistry')).toBe(true);
+    expect(hasActionOnTableResource(statements, 'dynamodb:Query', 'MatchMoveLog')).toBe(true);
+    expect(hasActionOnTableResource(statements, 'dynamodb:GetItem', 'MatchState')).toBe(false);
+    expect(hasActionOnTableResource(statements, 'dynamodb:PutItem', 'MatchState')).toBe(false);
+    expect(hasActionOnTableResource(statements, 'dynamodb:Query', 'MatchState')).toBe(false);
+    expect(hasActionOnTableResource(statements, 'dynamodb:PutItem', 'MatchMoveLog')).toBe(false);
+    expect(hasActionOnTableResource(statements, 'dynamodb:GetItem', 'MatchMoveLog')).toBe(false);
+    expect(hasActionOnTableResource(statements, 'dynamodb:UpdateItem', 'MatchMoveLog')).toBe(false);
+    expect(hasActionOnTableResource(statements, 'dynamodb:DeleteItem', 'MatchMoveLog')).toBe(false);
+  });
+
+  it('does not register PUT PATCH or DELETE on /v1/matches/{matchId}/moves', () => {
+    const app = new cdk.App();
+    const stack = new TurnurApiStack(app, 'TurnurApiStackMoveLogRouteMethodsTest');
+    const template = Template.fromStack(stack);
+    const routes = template.findResources('AWS::ApiGatewayV2::Route');
+    const moveRoutes = Object.values(routes)
+      .map((route) => route.Properties?.RouteKey as string)
+      .filter((routeKey) => routeKey?.includes('/moves'));
+
+    expect(moveRoutes).toContain('GET /v1/matches/{matchId}/moves');
+    expect(moveRoutes).toContain('POST /v1/matches/{matchId}/moves');
+    expect(moveRoutes.filter((routeKey) => routeKey.startsWith('PUT'))).toHaveLength(0);
+    expect(moveRoutes.filter((routeKey) => routeKey.startsWith('PATCH'))).toHaveLength(0);
+    expect(moveRoutes.filter((routeKey) => routeKey.startsWith('DELETE'))).toHaveLength(0);
+    expect(moveRoutes.some((routeKey) => routeKey.includes('/moves/{'))).toBe(false);
   });
 });

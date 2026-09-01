@@ -30,6 +30,7 @@ export class TurnurApiStack extends cdk.Stack {
   public readonly matchesTurnFunction: lambdaNodejs.NodejsFunction;
   public readonly matchesMovesFunction: lambdaNodejs.NodejsFunction;
   public readonly matchesViewFunction: lambdaNodejs.NodejsFunction;
+  public readonly matchesMoveLogFunction: lambdaNodejs.NodejsFunction;
   public readonly gameRegistryTable: dynamodb.Table;
   public readonly matchRegistryTable: dynamodb.Table;
   public readonly matchStateTable: dynamodb.Table;
@@ -277,6 +278,25 @@ export class TurnurApiStack extends cdk.Stack {
       path: '/v1/matches/{matchId}/seats/{seatId}/view',
       methods: [apigwv2.HttpMethod.PUT, apigwv2.HttpMethod.GET],
       integration: matchesViewIntegration,
+    });
+
+    this.matchesMoveLogFunction = this.createProtectedNodejsFunction('MatchesMoveLogFn', {
+      entry: path.join(__dirname, '../lambda/matches-move-log-handler.ts'),
+      handler: 'handler',
+      description: 'GET /v1/matches/{matchId}/moves — read append-only move log',
+      matchRegistryRead: true,
+      matchMoveLogRead: true,
+    });
+
+    const matchesMoveLogIntegration = new integrations.HttpLambdaIntegration(
+      'MatchesMoveLogInt',
+      this.matchesMoveLogFunction,
+    );
+
+    this.httpApi.addRoutes({
+      path: '/v1/matches/{matchId}/moves',
+      methods: [apigwv2.HttpMethod.GET],
+      integration: matchesMoveLogIntegration,
     });
   }
 
