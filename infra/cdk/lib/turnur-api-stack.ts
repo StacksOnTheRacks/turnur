@@ -28,6 +28,8 @@ export class TurnurApiStack extends cdk.Stack {
   public readonly matchesProbeFunction: lambdaNodejs.NodejsFunction;
   public readonly gameRegistryTable: dynamodb.Table;
   public readonly matchRegistryTable: dynamodb.Table;
+  public readonly matchStateTable: dynamodb.Table;
+  public readonly matchMoveLogTable: dynamodb.Table;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -105,6 +107,40 @@ export class TurnurApiStack extends cdk.Stack {
       exportName: 'MatchRegistryTableArn',
     });
 
+    this.matchStateTable = new dynamodb.Table(this, 'MatchState', {
+      partitionKey: { name: 'matchId', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'sk', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    new cdk.CfnOutput(this, 'MatchStateTableName', {
+      value: this.matchStateTable.tableName,
+      exportName: 'MatchStateTableName',
+    });
+
+    new cdk.CfnOutput(this, 'MatchStateTableArn', {
+      value: this.matchStateTable.tableArn,
+      exportName: 'MatchStateTableArn',
+    });
+
+    this.matchMoveLogTable = new dynamodb.Table(this, 'MatchMoveLog', {
+      partitionKey: { name: 'matchId', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'seq', type: dynamodb.AttributeType.NUMBER },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    new cdk.CfnOutput(this, 'MatchMoveLogTableName', {
+      value: this.matchMoveLogTable.tableName,
+      exportName: 'MatchMoveLogTableName',
+    });
+
+    new cdk.CfnOutput(this, 'MatchMoveLogTableArn', {
+      value: this.matchMoveLogTable.tableArn,
+      exportName: 'MatchMoveLogTableArn',
+    });
+
     this.gameMeFunction = this.createProtectedNodejsFunction('GameMeFn', {
       entry: path.join(__dirname, '../lambda/game-me-handler.ts'),
       handler: 'handler',
@@ -165,7 +201,14 @@ export class TurnurApiStack extends cdk.Stack {
     props: Pick<
       lambdaNodejs.NodejsFunctionProps,
       'entry' | 'handler' | 'environment' | 'description'
-    > & { matchRegistryWrite?: boolean; matchRegistryRead?: boolean },
+    > & {
+      matchRegistryWrite?: boolean;
+      matchRegistryRead?: boolean;
+      matchStateRead?: boolean;
+      matchStateWrite?: boolean;
+      matchMoveLogRead?: boolean;
+      matchMoveLogWrite?: boolean;
+    },
   ): lambdaNodejs.NodejsFunction {
     const environment: Record<string, string> = {
       ...props.environment,
@@ -173,6 +216,12 @@ export class TurnurApiStack extends cdk.Stack {
     };
     if (props.matchRegistryWrite || props.matchRegistryRead) {
       environment.MATCH_REGISTRY_TABLE_NAME = this.matchRegistryTable.tableName;
+    }
+    if (props.matchStateRead || props.matchStateWrite) {
+      environment.MATCH_STATE_TABLE_NAME = this.matchStateTable.tableName;
+    }
+    if (props.matchMoveLogRead || props.matchMoveLogWrite) {
+      environment.MATCH_MOVE_LOG_TABLE_NAME = this.matchMoveLogTable.tableName;
     }
 
     const fn = new lambdaNodejs.NodejsFunction(this, id, {
@@ -205,6 +254,42 @@ export class TurnurApiStack extends cdk.Stack {
         new iam.PolicyStatement({
           actions: ['dynamodb:GetItem'],
           resources: [this.matchRegistryTable.tableArn],
+        }),
+      );
+    }
+
+    if (props.matchStateRead) {
+      fn.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: ['dynamodb:GetItem'],
+          resources: [this.matchStateTable.tableArn],
+        }),
+      );
+    }
+
+    if (props.matchStateWrite) {
+      fn.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: ['dynamodb:PutItem'],
+          resources: [this.matchStateTable.tableArn],
+        }),
+      );
+    }
+
+    if (props.matchMoveLogRead) {
+      fn.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: ['dynamodb:Query'],
+          resources: [this.matchMoveLogTable.tableArn],
+        }),
+      );
+    }
+
+    if (props.matchMoveLogWrite) {
+      fn.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: ['dynamodb:PutItem'],
+          resources: [this.matchMoveLogTable.tableArn],
         }),
       );
     }
