@@ -84,16 +84,6 @@ class MatchMoveLogWriteProbeStack extends TurnurApiStack {
   }
 }
 
-function policyStatements(template: Template): Array<{
-  Action?: string | string[];
-  Resource?: string | string[];
-}> {
-  const policies = template.findResources('AWS::IAM::Policy');
-  return Object.values(policies).flatMap(
-    (policy) => policy.Properties?.PolicyDocument?.Statement ?? [],
-  );
-}
-
 function lambdaPolicyStatements(
   template: Template,
   logicalIdFragment: string,
@@ -175,7 +165,7 @@ describe('TurnurApiStack', () => {
       Runtime: 'nodejs22.x',
     });
 
-    template.resourceCountIs('AWS::ApiGatewayV2::Route', 6);
+    template.resourceCountIs('AWS::ApiGatewayV2::Route', 9);
     template.hasResourceProperties('AWS::ApiGatewayV2::Route', {
       RouteKey: 'GET /v1/health',
       AuthorizationType: 'NONE',
@@ -200,8 +190,20 @@ describe('TurnurApiStack', () => {
       RouteKey: 'GET /v1/matches/{matchId}/seats',
       AuthorizationType: 'NONE',
     });
+    template.hasResourceProperties('AWS::ApiGatewayV2::Route', {
+      RouteKey: 'GET /v1/matches/{matchId}/turn',
+      AuthorizationType: 'NONE',
+    });
+    template.hasResourceProperties('AWS::ApiGatewayV2::Route', {
+      RouteKey: 'PUT /v1/matches/{matchId}/turn',
+      AuthorizationType: 'NONE',
+    });
+    template.hasResourceProperties('AWS::ApiGatewayV2::Route', {
+      RouteKey: 'POST /v1/matches/{matchId}/moves',
+      AuthorizationType: 'NONE',
+    });
 
-    template.resourceCountIs('AWS::ApiGatewayV2::Integration', 5);
+    template.resourceCountIs('AWS::ApiGatewayV2::Integration', 7);
     template.hasResourceProperties('AWS::ApiGatewayV2::Integration', {
       IntegrationType: 'AWS_PROXY',
       PayloadFormatVersion: '2.0',
@@ -453,7 +455,7 @@ describe('TurnurApiStack', () => {
     const app = new cdk.App();
     const stack = new MatchMoveLogReadProbeStack(app, 'TurnurApiStackMatchMoveLogReadTest');
     const template = Template.fromStack(stack);
-    const statements = policyStatements(template);
+    const statements = lambdaPolicyStatements(template, 'MatchMoveLogReadProbeFn');
 
     template.hasResourceProperties('AWS::Lambda::Function', {
       Runtime: 'nodejs22.x',
@@ -473,7 +475,7 @@ describe('TurnurApiStack', () => {
     const app = new cdk.App();
     const stack = new MatchMoveLogWriteProbeStack(app, 'TurnurApiStackMatchMoveLogWriteTest');
     const template = Template.fromStack(stack);
-    const statements = policyStatements(template);
+    const statements = lambdaPolicyStatements(template, 'MatchMoveLogWriteProbeFn');
 
     template.hasResourceProperties('AWS::Lambda::Function', {
       Runtime: 'nodejs22.x',
@@ -510,5 +512,51 @@ describe('TurnurApiStack', () => {
     expect(hasActionOnTableResource(statements, 'dynamodb:GetItem', 'MatchMoveLog')).toBe(false);
     expect(hasActionOnTableResource(statements, 'dynamodb:PutItem', 'MatchMoveLog')).toBe(false);
     expect(hasActionOnTableResource(statements, 'dynamodb:Query', 'MatchMoveLog')).toBe(false);
+  });
+
+  it('MatchesTurnFn receives MatchState and MatchRegistry env and IAM without MatchMoveLog', () => {
+    const app = new cdk.App();
+    const stack = new TurnurApiStack(app, 'TurnurApiStackMatchesTurnTest');
+    const template = Template.fromStack(stack);
+    const statements = lambdaPolicyStatements(template, 'MatchesTurnFn');
+
+    const env = lambdaEnvVars(template, 'MatchesTurnFn');
+    expect(env).toMatchObject({
+      GAME_REGISTRY_TABLE_NAME: expect.anything(),
+      MATCH_REGISTRY_TABLE_NAME: expect.anything(),
+      MATCH_STATE_TABLE_NAME: expect.anything(),
+    });
+    expect(env).not.toHaveProperty('MATCH_MOVE_LOG_TABLE_NAME');
+
+    expect(hasActionOnTableResource(statements, 'dynamodb:GetItem', 'MatchRegistry')).toBe(true);
+    expect(hasActionOnTableResource(statements, 'dynamodb:GetItem', 'MatchState')).toBe(true);
+    expect(hasActionOnTableResource(statements, 'dynamodb:PutItem', 'MatchState')).toBe(true);
+    expect(hasActionOnTableResource(statements, 'dynamodb:Query', 'MatchState')).toBe(false);
+    expect(hasActionOnTableResource(statements, 'dynamodb:GetItem', 'MatchMoveLog')).toBe(false);
+    expect(hasActionOnTableResource(statements, 'dynamodb:PutItem', 'MatchMoveLog')).toBe(false);
+    expect(hasActionOnTableResource(statements, 'dynamodb:Query', 'MatchMoveLog')).toBe(false);
+  });
+
+  it('MatchesMovesFn receives MatchMoveLog and MatchState read env and IAM without MatchState write', () => {
+    const app = new cdk.App();
+    const stack = new TurnurApiStack(app, 'TurnurApiStackMatchesMovesTest');
+    const template = Template.fromStack(stack);
+    const statements = lambdaPolicyStatements(template, 'MatchesMovesFn');
+
+    const env = lambdaEnvVars(template, 'MatchesMovesFn');
+    expect(env).toMatchObject({
+      GAME_REGISTRY_TABLE_NAME: expect.anything(),
+      MATCH_REGISTRY_TABLE_NAME: expect.anything(),
+      MATCH_STATE_TABLE_NAME: expect.anything(),
+      MATCH_MOVE_LOG_TABLE_NAME: expect.anything(),
+    });
+
+    expect(hasActionOnTableResource(statements, 'dynamodb:GetItem', 'MatchRegistry')).toBe(true);
+    expect(hasActionOnTableResource(statements, 'dynamodb:GetItem', 'MatchState')).toBe(true);
+    expect(hasActionOnTableResource(statements, 'dynamodb:PutItem', 'MatchState')).toBe(false);
+    expect(hasActionOnTableResource(statements, 'dynamodb:Query', 'MatchState')).toBe(false);
+    expect(hasActionOnTableResource(statements, 'dynamodb:Query', 'MatchMoveLog')).toBe(true);
+    expect(hasActionOnTableResource(statements, 'dynamodb:PutItem', 'MatchMoveLog')).toBe(true);
+    expect(hasActionOnTableResource(statements, 'dynamodb:GetItem', 'MatchMoveLog')).toBe(false);
   });
 });

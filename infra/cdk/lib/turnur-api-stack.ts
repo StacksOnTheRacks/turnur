@@ -27,6 +27,8 @@ export class TurnurApiStack extends cdk.Stack {
   public readonly matchesAttachFunction: lambdaNodejs.NodejsFunction;
   public readonly matchesProbeFunction: lambdaNodejs.NodejsFunction;
   public readonly matchesSeatsFunction: lambdaNodejs.NodejsFunction;
+  public readonly matchesTurnFunction: lambdaNodejs.NodejsFunction;
+  public readonly matchesMovesFunction: lambdaNodejs.NodejsFunction;
   public readonly gameRegistryTable: dynamodb.Table;
   public readonly matchRegistryTable: dynamodb.Table;
   public readonly matchStateTable: dynamodb.Table;
@@ -213,6 +215,47 @@ export class TurnurApiStack extends cdk.Stack {
       path: '/v1/matches/{matchId}/seats',
       methods: [apigwv2.HttpMethod.POST, apigwv2.HttpMethod.GET],
       integration: matchesSeatsIntegration,
+    });
+
+    this.matchesTurnFunction = this.createProtectedNodejsFunction('MatchesTurnFn', {
+      entry: path.join(__dirname, '../lambda/matches-turn-handler.ts'),
+      handler: 'handler',
+      description: 'GET/PUT /v1/matches/{matchId}/turn — read and designate current seat',
+      matchRegistryRead: true,
+      matchStateRead: true,
+      matchStateWrite: true,
+    });
+
+    const matchesTurnIntegration = new integrations.HttpLambdaIntegration(
+      'MatchesTurnInt',
+      this.matchesTurnFunction,
+    );
+
+    this.httpApi.addRoutes({
+      path: '/v1/matches/{matchId}/turn',
+      methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.PUT],
+      integration: matchesTurnIntegration,
+    });
+
+    this.matchesMovesFunction = this.createProtectedNodejsFunction('MatchesMovesFn', {
+      entry: path.join(__dirname, '../lambda/matches-moves-handler.ts'),
+      handler: 'handler',
+      description: 'POST /v1/matches/{matchId}/moves — append on-turn move',
+      matchRegistryRead: true,
+      matchStateRead: true,
+      matchMoveLogRead: true,
+      matchMoveLogWrite: true,
+    });
+
+    const matchesMovesIntegration = new integrations.HttpLambdaIntegration(
+      'MatchesMovesInt',
+      this.matchesMovesFunction,
+    );
+
+    this.httpApi.addRoutes({
+      path: '/v1/matches/{matchId}/moves',
+      methods: [apigwv2.HttpMethod.POST],
+      integration: matchesMovesIntegration,
     });
   }
 
