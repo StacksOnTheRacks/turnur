@@ -4,5 +4,6 @@ export default defineConfig({
   test: {
     include: ['lambda/**/*.test.ts', 'lib/**/*.test.ts'],
     environment: 'node',
+    testTimeout: 30_000,
   },
 });

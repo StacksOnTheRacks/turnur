@@ -157,4 +157,30 @@ describe('matches-probe-handler', () => {
     expect(body).not.toHaveProperty('matchId');
     expect(send).toHaveBeenCalledTimes(2);
   });
+
+  it('GET omits hidden-view fields even when MatchState has VIEW# items', async () => {
+    send.mockResolvedValueOnce({ Item: { gameId: DEV_FIXTURE_GAME_ID } });
+    send.mockResolvedValueOnce({
+      Item: {
+        matchId: MATCH_ID,
+        gameId: DEV_FIXTURE_GAME_ID,
+        status: 'created',
+        createdAt: '2026-08-27T12:00:00.000Z',
+      },
+    });
+
+    const result = await handler(
+      eventWithAuth(`Bearer ${DEV_FIXTURE_PLAINTEXT_SDK_KEY}`),
+      {} as never,
+      () => {},
+    );
+
+    expect(statusCode(result!)).toBe(200);
+    const body = responseBody(result!);
+    expect(Object.keys(body)).toEqual(['matchId', 'status', 'createdAt']);
+    expect(body).not.toHaveProperty('view');
+    expect(body).not.toHaveProperty('views');
+    expect(body).not.toHaveProperty('hiddenView');
+    expect(send).toHaveBeenCalledTimes(2);
+  });
 });
