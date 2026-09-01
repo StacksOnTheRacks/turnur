@@ -94,6 +94,44 @@ function policyStatements(template: Template): Array<{
   );
 }
 
+function lambdaPolicyStatements(
+  template: Template,
+  logicalIdFragment: string,
+): Array<{ Action?: string | string[]; Resource?: string | string[] }> {
+  const functions = template.findResources('AWS::Lambda::Function');
+  const fnEntry = Object.entries(functions).find(([id]) => id.includes(logicalIdFragment));
+  if (!fnEntry) {
+    return [];
+  }
+
+  const roleRef = fnEntry[1].Properties?.Role as
+    | { 'Fn::GetAtt'?: [string, string] }
+    | { Ref?: string }
+    | undefined;
+  const roleLogicalId =
+    roleRef && 'Fn::GetAtt' in roleRef
+      ? roleRef['Fn::GetAtt']?.[0]
+      : roleRef && 'Ref' in roleRef
+        ? roleRef.Ref
+        : undefined;
+
+  if (!roleLogicalId) {
+    return [];
+  }
+
+  const policies = template.findResources('AWS::IAM::Policy');
+  return Object.values(policies).flatMap((policy) => {
+    const roles = policy.Properties?.Roles ?? [];
+    const attached = roles.some(
+      (role: { Ref?: string }) => role.Ref === roleLogicalId,
+    );
+    if (!attached) {
+      return [];
+    }
+    return policy.Properties?.PolicyDocument?.Statement ?? [];
+  });
+}
+
 function hasActionOnTableResource(
   statements: Array<{ Action?: string | string[]; Resource?: string | string[] }>,
   action: string,
@@ -137,7 +175,7 @@ describe('TurnurApiStack', () => {
       Runtime: 'nodejs22.x',
     });
 
-    template.resourceCountIs('AWS::ApiGatewayV2::Route', 4);
+    template.resourceCountIs('AWS::ApiGatewayV2::Route', 6);
     template.hasResourceProperties('AWS::ApiGatewayV2::Route', {
       RouteKey: 'GET /v1/health',
       AuthorizationType: 'NONE',
@@ -154,8 +192,16 @@ describe('TurnurApiStack', () => {
       RouteKey: 'GET /v1/matches/{matchId}',
       AuthorizationType: 'NONE',
     });
+    template.hasResourceProperties('AWS::ApiGatewayV2::Route', {
+      RouteKey: 'POST /v1/matches/{matchId}/seats',
+      AuthorizationType: 'NONE',
+    });
+    template.hasResourceProperties('AWS::ApiGatewayV2::Route', {
+      RouteKey: 'GET /v1/matches/{matchId}/seats',
+      AuthorizationType: 'NONE',
+    });
 
-    template.resourceCountIs('AWS::ApiGatewayV2::Integration', 4);
+    template.resourceCountIs('AWS::ApiGatewayV2::Integration', 5);
     template.hasResourceProperties('AWS::ApiGatewayV2::Integration', {
       IntegrationType: 'AWS_PROXY',
       PayloadFormatVersion: '2.0',
@@ -347,27 +393,27 @@ describe('TurnurApiStack', () => {
     const app = new cdk.App();
     const stack = new TurnurApiStack(app, 'TurnurApiStackShippedHandlerIsolationTest');
     const template = Template.fromStack(stack);
-    const statements = policyStatements(template);
 
-    for (const fnId of ['GameMeFn', 'MatchesAttachFn', 'MatchesProbeFn']) {
+    for (const fnId of ['HealthFn', 'GameMeFn', 'MatchesAttachFn', 'MatchesProbeFn']) {
       const env = lambdaEnvVars(template, fnId);
       expect(env).not.toHaveProperty('MATCH_STATE_TABLE_NAME');
       expect(env).not.toHaveProperty('MATCH_MOVE_LOG_TABLE_NAME');
-    }
 
-    expect(hasActionOnTableResource(statements, 'dynamodb:GetItem', 'MatchState')).toBe(false);
-    expect(hasActionOnTableResource(statements, 'dynamodb:PutItem', 'MatchState')).toBe(false);
-    expect(hasActionOnTableResource(statements, 'dynamodb:Query', 'MatchState')).toBe(false);
-    expect(hasActionOnTableResource(statements, 'dynamodb:GetItem', 'MatchMoveLog')).toBe(false);
-    expect(hasActionOnTableResource(statements, 'dynamodb:PutItem', 'MatchMoveLog')).toBe(false);
-    expect(hasActionOnTableResource(statements, 'dynamodb:Query', 'MatchMoveLog')).toBe(false);
+      const statements = lambdaPolicyStatements(template, fnId);
+      expect(hasActionOnTableResource(statements, 'dynamodb:GetItem', 'MatchState')).toBe(false);
+      expect(hasActionOnTableResource(statements, 'dynamodb:PutItem', 'MatchState')).toBe(false);
+      expect(hasActionOnTableResource(statements, 'dynamodb:Query', 'MatchState')).toBe(false);
+      expect(hasActionOnTableResource(statements, 'dynamodb:GetItem', 'MatchMoveLog')).toBe(false);
+      expect(hasActionOnTableResource(statements, 'dynamodb:PutItem', 'MatchMoveLog')).toBe(false);
+      expect(hasActionOnTableResource(statements, 'dynamodb:Query', 'MatchMoveLog')).toBe(false);
+    }
   });
 
   it('protected Lambda factory with matchStateRead grants GetItem and sets env var', () => {
     const app = new cdk.App();
     const stack = new MatchStateReadProbeStack(app, 'TurnurApiStackMatchStateReadTest');
     const template = Template.fromStack(stack);
-    const statements = policyStatements(template);
+    const statements = lambdaPolicyStatements(template, 'MatchStateReadProbeFn');
 
     template.hasResourceProperties('AWS::Lambda::Function', {
       Runtime: 'nodejs22.x',
@@ -387,7 +433,7 @@ describe('TurnurApiStack', () => {
     const app = new cdk.App();
     const stack = new MatchStateWriteProbeStack(app, 'TurnurApiStackMatchStateWriteTest');
     const template = Template.fromStack(stack);
-    const statements = policyStatements(template);
+    const statements = lambdaPolicyStatements(template, 'MatchStateWriteProbeFn');
 
     template.hasResourceProperties('AWS::Lambda::Function', {
       Runtime: 'nodejs22.x',
@@ -441,5 +487,28 @@ describe('TurnurApiStack', () => {
     expect(hasActionOnTableResource(statements, 'dynamodb:PutItem', 'MatchMoveLog')).toBe(true);
     expect(hasActionOnTableResource(statements, 'dynamodb:Query', 'MatchMoveLog')).toBe(false);
     expect(hasActionOnTableResource(statements, 'dynamodb:GetItem', 'MatchMoveLog')).toBe(false);
+  });
+
+  it('MatchesSeatsFn receives MatchState and MatchRegistry env and IAM without MatchMoveLog or Query', () => {
+    const app = new cdk.App();
+    const stack = new TurnurApiStack(app, 'TurnurApiStackMatchesSeatsTest');
+    const template = Template.fromStack(stack);
+    const statements = lambdaPolicyStatements(template, 'MatchesSeatsFn');
+
+    const env = lambdaEnvVars(template, 'MatchesSeatsFn');
+    expect(env).toMatchObject({
+      GAME_REGISTRY_TABLE_NAME: expect.anything(),
+      MATCH_REGISTRY_TABLE_NAME: expect.anything(),
+      MATCH_STATE_TABLE_NAME: expect.anything(),
+    });
+    expect(env).not.toHaveProperty('MATCH_MOVE_LOG_TABLE_NAME');
+
+    expect(hasActionOnTableResource(statements, 'dynamodb:GetItem', 'MatchRegistry')).toBe(true);
+    expect(hasActionOnTableResource(statements, 'dynamodb:GetItem', 'MatchState')).toBe(true);
+    expect(hasActionOnTableResource(statements, 'dynamodb:PutItem', 'MatchState')).toBe(true);
+    expect(hasActionOnTableResource(statements, 'dynamodb:Query', 'MatchState')).toBe(false);
+    expect(hasActionOnTableResource(statements, 'dynamodb:GetItem', 'MatchMoveLog')).toBe(false);
+    expect(hasActionOnTableResource(statements, 'dynamodb:PutItem', 'MatchMoveLog')).toBe(false);
+    expect(hasActionOnTableResource(statements, 'dynamodb:Query', 'MatchMoveLog')).toBe(false);
   });
 });
