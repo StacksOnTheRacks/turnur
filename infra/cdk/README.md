@@ -38,6 +38,14 @@ npm run synth
 | `GET` | `/v1/game/me` | `Authorization: Bearer` SDK key | HTTP 200, `{ "gameId": "<string>" }`; HTTP 401 structured error |
 | `POST` | `/v1/matches` | `Authorization: Bearer` SDK key | HTTP 201, `{ "matchId": "<uuid>" }`; HTTP 401 structured error |
 | `GET` | `/v1/matches/{matchId}` | `Authorization: Bearer` SDK key | HTTP 200, `{ "matchId", "status", "createdAt" }`; HTTP 401/403/404 structured error |
+| `POST` | `/v1/matches/{matchId}/seats` | `Authorization: Bearer` SDK key | HTTP 201, `{ seatId, currentSeat }`; HTTP 401/403/404 structured error |
+| `GET` | `/v1/matches/{matchId}/seats` | `Authorization: Bearer` SDK key | HTTP 200, `{ seats: [{ seatId, createdAt }], currentSeat }`; HTTP 401/403/404 structured error |
+| `GET` | `/v1/matches/{matchId}/turn` | `Authorization: Bearer` SDK key | HTTP 200, `{ currentSeat }`; HTTP 401/403/404 structured error |
+| `PUT` | `/v1/matches/{matchId}/turn` | `Authorization: Bearer` SDK key | HTTP 200, `{ currentSeat }`; HTTP 400/401/403/404 structured error |
+| `POST` | `/v1/matches/{matchId}/moves` | `Authorization: Bearer` SDK key | HTTP 201, `{ seq, seatId, createdAt, currentSeat }`; HTTP 400/401/403/404/409 structured error |
+| `PUT` | `/v1/matches/{matchId}/seats/{seatId}/view` | `Authorization: Bearer` SDK key | HTTP 200, `{ seatId }`; HTTP 400/401/403/404 structured error |
+| `GET` | `/v1/matches/{matchId}/seats/{seatId}/view` | `Authorization: Bearer` SDK key | HTTP 200, `{ seatId, view }`; HTTP 401/403/404 structured error |
+| `GET` | `/v1/matches/{matchId}/moves` | `Authorization: Bearer` SDK key | HTTP 200, `{ items: [{ seq, seatId, payload, createdAt }] }`; HTTP 401/403/404 structured error |
 
 The health route confirms the control-plane Lambda and API Gateway wiring are present. It does not check downstream dependencies (DynamoDB, Cognito, etc.).
 
@@ -318,15 +326,337 @@ On **401**, **403**, or **404**, the client throws an error with the structured 
 
 ### Not yet implemented
 
-The following match-state capabilities are not available over HTTP yet:
+The following match-state capability is not available over HTTP yet:
 
-- Seats
-- Turns
-- Hidden views
-- Move log
 - Signed result
 
-Documenting them here sets expectations only; attach and probe are the only match routes in v1.
+For seats, turn designation, moves, hidden views, and the move log, see [Match authority onboarding](#match-authority-onboarding).
+
+## Match authority onboarding
+
+After [host attach onboarding](#host-attach-onboarding) confirms you can attach and probe a match, use Turnur as match-state authority for seats, turn designation, on-turn moves, seat-scoped hidden views, and the append-only move log. The path is:
+
+1. **`POST /v1/matches/{matchId}/seats`** — create seats (server-issued `seatId`; no player identity).
+2. **`GET /v1/matches/{matchId}/seats`** — list the public roster and `currentSeat`.
+3. **`GET /v1/matches/{matchId}/turn`** / **`PUT /v1/matches/{matchId}/turn`** — read or designate `currentSeat`.
+4. **`POST /v1/matches/{matchId}/moves`** — submit an on-turn move (appends to the log when accepted).
+5. **`PUT /v1/matches/{matchId}/seats/{seatId}/view`** / **`GET .../view`** — write or read one seat's hidden view.
+6. **`GET /v1/matches/{matchId}/moves`** — read the append-only move log.
+
+Reuse `$TURNUR_BASE_URL`, `$TURNUR_SDK_KEY`, and `$TURNUR_MATCH_ID` from host attach. **Do not log, commit, or paste SDK keys into public channels.**
+
+### Authentication model
+
+**Turnur authenticates games, not players.** Match-authority routes identify your game server via SDK key only. Seats carry no player identity — your host maps each `seatId` to a player outside Turnur. Player identity, chat, rooms, media, and game rules stay on the host platform (RiffSync or any equivalent).
+
+**Production SDK keys stay off player-facing game packs.** Keep keys on your game server or backend only. See [Authentication model](#authentication-model) under game auth onboarding for key format and header rules.
+
+Send the SDK key on every protected request:
+
+```http
+Authorization: Bearer turnur_sk_<32 lowercase hex>
+```
+
+For **401** `game_auth_required` / `game_auth_invalid`, **403** `match_forbidden`, and **404** `match_not_found`, see [Auth errors (401)](#auth-errors-401) and [Match errors (403, 404)](#match-errors-403-404).
+
+### Create seats
+
+`POST /v1/matches/{matchId}/seats` has no request body. Turnur issues a server-generated `seatId`. Creating a seat does not designate a turn — `currentSeat` stays JSON `null` until you call `PUT /turn`.
+
+```bash
+curl -sS -w "\nHTTP %{http_code}\n" \
+  -X POST \
+  -H "Authorization: Bearer $TURNUR_SDK_KEY" \
+  "$TURNUR_BASE_URL/v1/matches/$TURNUR_MATCH_ID/seats"
+```
+
+Expected **201** response:
+
+```json
+{
+  "seatId": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+  "currentSeat": null
+}
+```
+
+Save the returned `seatId` for turn designation, moves, and views. Run `POST` again to add more seats; each returns a distinct `seatId`.
+
+### List seats
+
+```bash
+curl -sS -w "\nHTTP %{http_code}\n" \
+  -H "Authorization: Bearer $TURNUR_SDK_KEY" \
+  "$TURNUR_BASE_URL/v1/matches/$TURNUR_MATCH_ID/seats"
+```
+
+Expected **200** response (after creating two seats):
+
+```json
+{
+  "seats": [
+    {
+      "seatId": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      "createdAt": "2026-08-27T12:00:00.000Z"
+    },
+    {
+      "seatId": "6ba7b811-9dad-11d1-80b4-00c04fd430c8",
+      "createdAt": "2026-08-27T12:00:01.000Z"
+    }
+  ],
+  "currentSeat": null
+}
+```
+
+The roster lists `seatId` and `createdAt` only — no player identity and no hidden views. An empty match returns `{ "seats": [], "currentSeat": null }`, not 404.
+
+### Current turn
+
+Turnur does not auto-advance the turn after an accepted move and does not run game rules. **Your game designates `currentSeat`.** Extra-turn is `PUT` the same `seatId` again; pass is `PUT` a different seated `seatId`.
+
+**Get current turn:**
+
+```bash
+curl -sS -w "\nHTTP %{http_code}\n" \
+  -H "Authorization: Bearer $TURNUR_SDK_KEY" \
+  "$TURNUR_BASE_URL/v1/matches/$TURNUR_MATCH_ID/turn"
+```
+
+Expected **200** response when no seat is designated:
+
+```json
+{ "currentSeat": null }
+```
+
+**Designate turn** — substitute a `seatId` from create/list:
+
+```bash
+export TURNUR_SEAT_ID="6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+
+curl -sS -w "\nHTTP %{http_code}\n" \
+  -X PUT \
+  -H "Authorization: Bearer $TURNUR_SDK_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"seatId\":\"$TURNUR_SEAT_ID\"}" \
+  "$TURNUR_BASE_URL/v1/matches/$TURNUR_MATCH_ID/turn"
+```
+
+Expected **200** response:
+
+```json
+{ "currentSeat": "6ba7b810-9dad-11d1-80b4-00c04fd430c8" }
+```
+
+### Submit a move
+
+`POST /v1/matches/{matchId}/moves` accepts a move only when `seatId` equals `currentSeat`. An accepted move appends to the log and does **not** change `currentSeat`. A rejected move is not appended. `payload` is opaque JSON public to the owning game.
+
+```bash
+curl -sS -w "\nHTTP %{http_code}\n" \
+  -X POST \
+  -H "Authorization: Bearer $TURNUR_SDK_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"seatId\":\"$TURNUR_SEAT_ID\",\"payload\":{\"opaque\":true}}" \
+  "$TURNUR_BASE_URL/v1/matches/$TURNUR_MATCH_ID/moves"
+```
+
+Expected **201** response (note: no `payload` echo):
+
+```json
+{
+  "seq": 1,
+  "seatId": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+  "createdAt": "2026-08-27T12:00:02.000Z",
+  "currentSeat": "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+}
+```
+
+After accept, designate the next seat with `PUT /turn` when your game rules say the turn passes.
+
+### Hidden views
+
+Hidden views are seat-scoped. Put private or per-seat state in views, not in the move log. Shared reads (`GET` seats, `GET` turn, `GET` match probe, `GET /moves`) omit hidden views.
+
+**Write a view:**
+
+```bash
+curl -sS -w "\nHTTP %{http_code}\n" \
+  -X PUT \
+  -H "Authorization: Bearer $TURNUR_SDK_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"view\":{\"hand\":[\"card-a\",\"card-b\"]}}" \
+  "$TURNUR_BASE_URL/v1/matches/$TURNUR_MATCH_ID/seats/$TURNUR_SEAT_ID/view"
+```
+
+Expected **200** response (note: no `view` echo):
+
+```json
+{ "seatId": "6ba7b810-9dad-11d1-80b4-00c04fd430c8" }
+```
+
+**Read a view** — returns only that seat's view:
+
+```bash
+curl -sS -w "\nHTTP %{http_code}\n" \
+  -H "Authorization: Bearer $TURNUR_SDK_KEY" \
+  "$TURNUR_BASE_URL/v1/matches/$TURNUR_MATCH_ID/seats/$TURNUR_SEAT_ID/view"
+```
+
+Expected **200** response:
+
+```json
+{
+  "seatId": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+  "view": { "hand": ["card-a", "card-b"] }
+}
+```
+
+If no view has been written, `view` is JSON `null`.
+
+### Move log
+
+`GET /v1/matches/{matchId}/moves` returns the append-only log of accepted moves for the owning game. Each item includes `payload`. There is no `PUT`, `PATCH`, or `DELETE` on `/moves`.
+
+```bash
+curl -sS -w "\nHTTP %{http_code}\n" \
+  -H "Authorization: Bearer $TURNUR_SDK_KEY" \
+  "$TURNUR_BASE_URL/v1/matches/$TURNUR_MATCH_ID/moves"
+```
+
+Expected **200** response:
+
+```json
+{
+  "items": [
+    {
+      "seq": 1,
+      "seatId": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      "payload": { "opaque": true },
+      "createdAt": "2026-08-27T12:00:02.000Z"
+    }
+  ]
+}
+```
+
+An empty log is `{ "items": [] }`, not 404. Rejected moves (for example **409** `illegal_turn`) never appear in `items`.
+
+### Authority errors (400, 404, 409)
+
+Match-authority routes return the same structured JSON shape as auth and match errors (`code`, `message`, `hint`).
+
+| `code` | HTTP | When |
+| --- | --- | --- |
+| `invalid_request` | 400 | Missing or invalid request body field |
+| `seat_not_found` | 404 | `seatId` does not exist on this match |
+| `illegal_turn` | 409 | `currentSeat` is null, or `seatId` is not `currentSeat` on move submit |
+
+For moves, checks run in order: invalid request → seat not found → illegal turn.
+
+**400 — invalid request** — omit required fields on move submit:
+
+```bash
+curl -sS -w "\nHTTP %{http_code}\n" \
+  -X POST \
+  -H "Authorization: Bearer $TURNUR_SDK_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{}" \
+  "$TURNUR_BASE_URL/v1/matches/$TURNUR_MATCH_ID/moves"
+```
+
+Example **400** body:
+
+```json
+{
+  "code": "invalid_request",
+  "message": "Invalid request",
+  "hint": "Provide seatId and payload in the request body."
+}
+```
+
+**404 — seat not found** — designate or move for an unknown seat:
+
+```bash
+curl -sS -w "\nHTTP %{http_code}\n" \
+  -X PUT \
+  -H "Authorization: Bearer $TURNUR_SDK_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"seatId\":\"00000000-0000-4000-8000-000000000000\"}" \
+  "$TURNUR_BASE_URL/v1/matches/$TURNUR_MATCH_ID/turn"
+```
+
+Example **404** body:
+
+```json
+{
+  "code": "seat_not_found",
+  "message": "Seat not found",
+  "hint": "Create the seat via POST /v1/matches/{matchId}/seats before designating it or submitting a move."
+}
+```
+
+**409 — illegal turn** — submit a move when no seat is current, or for a seat that is not `currentSeat`:
+
+```bash
+curl -sS -w "\nHTTP %{http_code}\n" \
+  -X POST \
+  -H "Authorization: Bearer $TURNUR_SDK_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"seatId\":\"$TURNUR_SEAT_ID\",\"payload\":{\"opaque\":true}}" \
+  "$TURNUR_BASE_URL/v1/matches/$TURNUR_MATCH_ID/moves"
+```
+
+Example **409** body (when `currentSeat` is null or does not match `seatId`):
+
+```json
+{
+  "code": "illegal_turn",
+  "message": "Illegal turn",
+  "hint": "Submit a move only for the current seat. Designate a seat with PUT /v1/matches/{matchId}/turn first if none is current."
+}
+```
+
+### Dev stack fixture (non-production)
+
+> **NON-PRODUCTION ONLY.** Use the dev fixture key from [game auth onboarding](#dev-stack-fixture-non-production) with a `$TURNUR_MATCH_ID` from host attach. Run the create-seat → designate → move → view → list-moves sequence against a dev deploy.
+
+### TypeScript SDK (optional)
+
+When [`packages/turnur-sdk/`](../../packages/turnur-sdk/) is available, match authority uses the same client as attach and probe:
+
+```typescript
+import { createTurnurClient, TurnurApiError } from '@turnur/sdk';
+
+const client = createTurnurClient({
+  baseUrl: process.env.TURNUR_BASE_URL!,
+  apiKey: process.env.TURNUR_SDK_KEY!,
+});
+
+const { matchId } = await client.match.create();
+const { seatId } = await client.match.seat.create(matchId);
+const roster = await client.match.seat.list(matchId);
+
+await client.match.turn.set(matchId, seatId);
+const { currentSeat } = await client.match.turn.get(matchId);
+
+const move = await client.match.move.create(matchId, {
+  seatId,
+  payload: { opaque: true },
+});
+
+await client.match.view.put(matchId, seatId, { hand: ['card-a'] });
+const hidden = await client.match.view.get(matchId, seatId);
+const log = await client.match.moves.list(matchId);
+```
+
+On **400**, **401**, **403**, **404**, or **409**, the client throws `TurnurApiError` with structured `code`, `message`, and `hint`. Do not log `apiKey` or hidden-view payloads.
+
+### Not yet implemented
+
+The following are not available in this slice:
+
+- Signed result
+- Player or host authentication (callers remain game SDK key only)
+- Chat, rooms, or media (stay on the host)
+- A game-rule engine (Turnur stores state; your game designates turns and evaluates rules)
 
 ## Layout
 
