@@ -29,6 +29,7 @@ export class TurnurApiStack extends cdk.Stack {
   public readonly matchesSeatsFunction: lambdaNodejs.NodejsFunction;
   public readonly matchesTurnFunction: lambdaNodejs.NodejsFunction;
   public readonly matchesMovesFunction: lambdaNodejs.NodejsFunction;
+  public readonly matchesViewFunction: lambdaNodejs.NodejsFunction;
   public readonly gameRegistryTable: dynamodb.Table;
   public readonly matchRegistryTable: dynamodb.Table;
   public readonly matchStateTable: dynamodb.Table;
@@ -256,6 +257,26 @@ export class TurnurApiStack extends cdk.Stack {
       path: '/v1/matches/{matchId}/moves',
       methods: [apigwv2.HttpMethod.POST],
       integration: matchesMovesIntegration,
+    });
+
+    this.matchesViewFunction = this.createProtectedNodejsFunction('MatchesViewFn', {
+      entry: path.join(__dirname, '../lambda/matches-view-handler.ts'),
+      handler: 'handler',
+      description: 'PUT/GET /v1/matches/{matchId}/seats/{seatId}/view — seat hidden views',
+      matchRegistryRead: true,
+      matchStateRead: true,
+      matchStateWrite: true,
+    });
+
+    const matchesViewIntegration = new integrations.HttpLambdaIntegration(
+      'MatchesViewInt',
+      this.matchesViewFunction,
+    );
+
+    this.httpApi.addRoutes({
+      path: '/v1/matches/{matchId}/seats/{seatId}/view',
+      methods: [apigwv2.HttpMethod.PUT, apigwv2.HttpMethod.GET],
+      integration: matchesViewIntegration,
     });
   }
 
