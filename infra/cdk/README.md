@@ -30,6 +30,28 @@ npm run synth
 - **`npm test`** - runs Vitest handler and stack assertions
 - **`npm run synth`** - emits CloudFormation templates under `cdk.out/` (no AWS credentials required)
 
+## Deploy
+
+There is one environment: **`TurnurApiStack`**. Pushes to `main` that change `infra/cdk/**` (or this workflow) run synth and tests, then `cdk deploy TurnurApiStack`. Pull requests never deploy.
+
+GitHub Actions assumes the role in repository variable **`AWS_DEPLOY_ROLE_ARN`** via OIDC. Optional **`AWS_REGION`** defaults to `us-east-1`. Set those on the repo (Settings → Secrets and variables → Actions → Variables). Prefer OIDC over long-lived access keys.
+
+IAM trust (`sts:AssumeRoleWithWebIdentity`) should restrict:
+
+- Issuer: `token.actions.githubusercontent.com`
+- Audience (`aud`): `sts.amazonaws.com`
+- Subject (`sub`): `repo:StacksOnTheRacks/turnur:ref:refs/heads/main`
+
+The role needs CDK deploy permissions for this stack (CloudFormation, S3 bootstrap assets, IAM pass-through, Lambda, API Gateway HTTP, DynamoDB, CloudWatch Logs). Bootstrap the target account/region once (`npx cdk bootstrap`) before the first CI deploy.
+
+After deploy, CI reads stack output **`HttpApiUrl`** and asserts `GET /v1/health` returns `{ "ok": true }`.
+
+Local deploy (same stack):
+
+```bash
+npx cdk deploy TurnurApiStack --require-approval never
+```
+
 ## HTTP API
 
 | Method | Path | Auth | Response |

@@ -17,6 +17,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   infra-cdk:
     runs-on: ubuntu-latest
@@ -50,3 +54,54 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [infra-cdk]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    concurrency:
+      group: cdk-deploy
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: infra/cdk
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require deploy OIDC role
+        env:
+          ROLE: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          if [ -z "$ROLE" ]; then
+            echo "::error::Set repository variable AWS_DEPLOY_ROLE_ARN to the IAM role ARN trusted via GitHub OIDC (see infra/cdk/README.md)."
+            exit 1
+          fi
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: infra/cdk/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - name: Deploy TurnurApiStack
+        run: npx cdk deploy TurnurApiStack --require-approval never
+      - name: Smoke GET /v1/health
+        run: |
+          set -euo pipefail
+          API_URL="$(aws cloudformation describe-stacks --stack-name TurnurApiStack \
+            --query "Stacks[0].Outputs[?OutputKey=='HttpApiUrl'].OutputValue" --output text)"
+          API_URL="${API_URL%/}"
+          if [ -z "$API_URL" ] || [ "$API_URL" = "None" ]; then
+            echo "::error::TurnurApiStack is missing HttpApiUrl output"
+            exit 1
+          fi
+          echo "Health URL: ${API_URL}/v1/health"
+          body="$(curl -sS -f "${API_URL}/v1/health")"
+          echo "$body"
+          python3 -c 'import json,sys; data=json.loads(sys.argv[1]); assert data.get("ok") is True, data' "$body"
