@@ -221,6 +221,10 @@ describe('TurnurApiStack', () => {
       PayloadFormatVersion: '2.0',
     });
 
+    template.hasOutput('HttpApiUrl', {
+      Export: { Name: 'HttpApiUrl' },
+    });
+
     template.resourceCountIs('AWS::ApiGatewayV2::Authorizer', 0);
 
     template.hasResourceProperties('AWS::Lambda::Function', {

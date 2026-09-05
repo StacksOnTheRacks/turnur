@@ -62,6 +62,11 @@ export class TurnurApiStack extends cdk.Stack {
       integration: healthIntegration,
     });
 
+    new cdk.CfnOutput(this, 'HttpApiUrl', {
+      value: this.httpApi.apiEndpoint,
+      exportName: 'HttpApiUrl',
+    });
+
     this.gameRegistryTable = new dynamodb.Table(this, 'GameRegistry', {
       partitionKey: { name: 'keyHash', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
